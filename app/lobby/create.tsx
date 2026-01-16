@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { View, Text, TextInput, StyleSheet, Pressable, ActivityIndicator, Alert, ScrollView, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
@@ -14,6 +14,7 @@ export default function CreateRoom() {
     const [categories, setCategories] = useState<Category[]>([]);
     const [selectedTopic, setSelectedTopic] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
+    const actionLock = useRef(false);
     const router = useRouter();
 
     useEffect(() => { fetchCategories(); }, []);
@@ -50,7 +51,12 @@ export default function CreateRoom() {
     const generateRoomCode = () => Math.random().toString(36).substring(2, 6).toUpperCase();
 
     const handleCreateRoom = async () => {
-        if (!nickname.trim()) { showAlert('خطأ', 'ادخل اسمك يا ولد'); return; }
+        if (!nickname.trim() || loading || actionLock.current) {
+            if (!nickname.trim()) showAlert('خطأ', 'ادخل اسمك يا ولد');
+            return;
+        }
+
+        actionLock.current = true;
         setLoading(true);
         const roomCode = generateRoomCode();
         try {

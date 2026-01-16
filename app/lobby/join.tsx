@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { View, Text, TextInput, StyleSheet, Pressable, ActivityIndicator, Alert, ScrollView, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
@@ -10,10 +10,16 @@ export default function JoinRoom() {
     const [nickname, setNickname] = useState('');
     const [roomCode, setRoomCode] = useState('');
     const [loading, setLoading] = useState(false);
+    const actionLock = useRef(false);
     const router = useRouter();
 
     const handleJoinRoom = async () => {
-        if (!nickname.trim() || !roomCode.trim()) { showAlert('خطأ', 'ادخل اسمك وكود الغرفة'); return; }
+        if (!nickname.trim() || !roomCode.trim() || loading || actionLock.current) {
+            if (!nickname.trim() || !roomCode.trim()) showAlert('خطأ', 'ادخل اسمك وكود الغرفة');
+            return;
+        }
+
+        actionLock.current = true;
         setLoading(true);
         try {
             const { data: room, error: roomError } = await supabase.from('rooms').select('code, status').eq('code', roomCode.toUpperCase()).single();

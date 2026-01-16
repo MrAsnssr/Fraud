@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { View, Text, StyleSheet, TextInput, Pressable, Alert, ActivityIndicator, ScrollView, Platform } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
@@ -31,6 +31,7 @@ export default function GameRoom() {
     const [round, setRound] = useState(1);
     const [categoryWords, setCategoryWords] = useState<string[]>([]);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const actionLock = useRef(false);
 
     useEffect(() => {
         if (code) {
@@ -63,9 +64,10 @@ export default function GameRoom() {
     const fetchVotes = async () => { const { data } = await supabase.from('votes').select('*').eq('room_code', code); if (data) { setVotes(data); setHasVoted(data.some(v => v.voter_id === playerId)); } };
 
     const handleSubmitClue = async () => {
-        if (!clue.trim() || isSubmitting || hasSubmitted) return;
+        if (!clue.trim() || isSubmitting || hasSubmitted || actionLock.current) return;
 
         // Immediate local guard even before state updates fully
+        actionLock.current = true;
         setIsSubmitting(true);
         setHasSubmitted(true);
 
@@ -82,9 +84,11 @@ export default function GameRoom() {
             fetchClues();
         } catch (e) {
             setHasSubmitted(false); // Re-enable if it failed
+            actionLock.current = false;
             showAlert('خطأ', 'فشل في إرسال الإشارة');
         } finally {
             setIsSubmitting(false);
+            // Lock stays true if success; handleAnotherRound clears it
         }
     };
     const handleStartVoting = async () => {
@@ -98,10 +102,12 @@ export default function GameRoom() {
     };
     const handleAnotherRound = async () => {
         if (isSubmitting) return;
+        actionLock.current = false;
         setRound(r => r + 1); setHasSubmitted(false);
     };
     const handleVote = async (targetId: string) => {
-        if (hasVoted || isSubmitting) return;
+        if (hasVoted || isSubmitting || actionLock.current) return;
+        actionLock.current = true;
         setIsSubmitting(true);
         try {
             await supabase.from('votes').insert({ voter_id: playerId, target_id: targetId, room_code: code });
@@ -126,7 +132,8 @@ export default function GameRoom() {
     };
 
     const handleTallyVotes = async () => {
-        if (isSubmitting) return;
+        if (isSubmitting || actionLock.current) return;
+        actionLock.current = true;
         setIsSubmitting(true);
         try {
             const counts: Record<string, number> = {}; votes.forEach(v => counts[v.target_id] = (counts[v.target_id] || 0) + 1);
@@ -140,11 +147,13 @@ export default function GameRoom() {
             }
         } finally {
             setIsSubmitting(false);
+            actionLock.current = false;
         }
     };
 
     const handleImposterGuess = async (guess: string) => {
-        if (isSubmitting) return;
+        if (isSubmitting || actionLock.current) return;
+        actionLock.current = true;
         setIsSubmitting(true);
         try {
             const isCorrect = guess === civilianWord;
@@ -153,6 +162,7 @@ export default function GameRoom() {
             await supabase.from('rooms').update({ status: 'FINISHED' }).eq('code', code);
         } finally {
             setIsSubmitting(false);
+            actionLock.current = false;
         }
     };
 
