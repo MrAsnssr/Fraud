@@ -19,7 +19,13 @@ export default function JoinRoom() {
             const { data: room, error: roomError } = await supabase.from('rooms').select('code, status').eq('code', roomCode.toUpperCase()).single();
             if (roomError || !room) throw new Error('الدخول مرفوض. الكود غلط.');
             if (room.status !== 'LOBBY') throw new Error('الجلسة شغالة من قبل.');
-            const { data: userData, error: userError } = await supabase.from('players').insert([{ room_code: roomCode.toUpperCase(), nickname: nickname.trim(), is_host: false }]).select().single();
+            const { data: { session } } = await supabase.auth.getSession();
+            const { data: userData, error: userError } = await supabase.from('players').insert([{
+                room_code: roomCode.toUpperCase(),
+                nickname: nickname.trim(),
+                is_host: false,
+                user_id: session?.user?.id || null
+            }]).select().single();
             if (userError) throw userError;
             router.push(`/lobby/${roomCode.toUpperCase()}?playerId=${userData.id}`);
         } catch (error: any) { showAlert('الدخول مرفوض', error.message); }

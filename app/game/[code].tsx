@@ -6,7 +6,7 @@ import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 
 const showAlert = (title: string, msg: string) => Platform.OS === 'web' ? window.alert(`${title}: ${msg}`) : Alert.alert(title, msg);
 
-type Player = { id: string; nickname: string; role: 'CIVILIAN' | 'IMPOSTER' };
+type Player = { id: string; nickname: string; role: 'CIVILIAN' | 'IMPOSTER'; user_id?: string | null };
 type Clue = { id: string; player_id: string; content: string };
 type Vote = { id: string; voter_id: string; target_id: string };
 
@@ -44,7 +44,7 @@ export default function GameRoom() {
     const initGame = async () => {
         const { data: pData } = await supabase.from('players').select('id, nickname, role').eq('id', playerId).single();
         const { data: rData } = await supabase.from('rooms').select('*').eq('code', code).single();
-        const { data: allP } = await supabase.from('players').select('id, nickname, role').eq('room_code', code);
+        const { data: allP } = await supabase.from('players').select('id, nickname, role, user_id').eq('room_code', code);
         if (!pData || !rData) { showAlert('خطأ', 'البيانات ما موجودة'); router.replace('/'); return; }
         setMe(pData); setRoomStatus(rData.status); setCivilianWord(rData.civilian_word); setImposterWord(rData.imposter_word);
         setWord(pData.role === 'IMPOSTER' ? rData.imposter_word : rData.civilian_word); setPlayers(allP || []);
@@ -66,16 +66,35 @@ export default function GameRoom() {
     const handleAnotherRound = async () => { setRound(r => r + 1); setHasSubmitted(false); };
     const handleVote = async (targetId: string) => { if (hasVoted) return; await supabase.from('votes').insert({ voter_id: playerId, target_id: targetId, room_code: code }); setHasVoted(true); fetchVotes(); };
 
+    const awardCredits = async (winnerRole: 'CIVILIAN' | 'IMPOSTER') => {
+        const winners = players.filter(p => p.role === winnerRole && p.user_id);
+        for (const w of winners) {
+            const { data: prof } = await supabase.from('profiles').select('credits, wins').eq('id', w.user_id).single();
+            if (prof) {
+                await supabase.from('profiles').update({
+                    credits: (prof.credits || 0) + 20,
+                    wins: (prof.wins || 0) + 1
+                }).eq('id', w.user_id);
+            }
+        }
+    };
+
     const handleTallyVotes = async () => {
         const counts: Record<string, number> = {}; votes.forEach(v => counts[v.target_id] = (counts[v.target_id] || 0) + 1);
         const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]); if (sorted.length === 0) return;
         const topVotedId = sorted[0][0]; const imposter = players.find(p => p.role === 'IMPOSTER');
         if (topVotedId === imposter?.id) { await supabase.from('rooms').update({ status: 'PLAYING_GUESS' }).eq('code', code); }
-        else { setWinner('النصّاب فاز! 🎭'); await supabase.from('rooms').update({ status: 'FINISHED' }).eq('code', code); }
+        else {
+            setWinner('النصّاب فاز! 🎭');
+            await awardCredits('IMPOSTER');
+            await supabase.from('rooms').update({ status: 'FINISHED' }).eq('code', code);
+        }
     };
 
     const handleImposterGuess = async (guess: string) => {
-        const isCorrect = guess === civilianWord; setWinner(isCorrect ? 'النصّاب فاز! 🎭' : 'المحققين فازوا! 🎉');
+        const isCorrect = guess === civilianWord;
+        setWinner(isCorrect ? 'النصّاب فاز! 🎭' : 'المحققين فازوا! 🎉');
+        await awardCredits(isCorrect ? 'IMPOSTER' : 'CIVILIAN');
         await supabase.from('rooms').update({ status: 'FINISHED' }).eq('code', code);
     };
 

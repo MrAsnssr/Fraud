@@ -55,7 +55,13 @@ export default function CreateRoom() {
         try {
             const { error: roomError } = await supabase.from('rooms').insert([{ code: roomCode, status: 'LOBBY', game_mode: gameMode }]);
             if (roomError) throw roomError;
-            const { data: userData, error: userError } = await supabase.from('players').insert([{ room_code: roomCode, nickname: nickname.trim(), is_host: true }]).select().single();
+            const { data: { session } } = await supabase.auth.getSession();
+            const { data: userData, error: userError } = await supabase.from('players').insert([{
+                room_code: roomCode,
+                nickname: nickname.trim(),
+                is_host: true,
+                user_id: session?.user?.id || null
+            }]).select().single();
             if (userError) throw userError;
             router.push(`/lobby/${roomCode}?playerId=${userData.id}`);
         } catch (error: any) { showAlert('خطأ', error.message); }

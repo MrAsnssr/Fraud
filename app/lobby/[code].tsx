@@ -12,7 +12,7 @@ const showAlert = (title: string, message: string) => {
     }
 };
 
-type Player = { id: string; nickname: string; is_host: boolean };
+type Player = { id: string; nickname: string; is_host: boolean; user_id?: string | null };
 
 export default function LobbyRoom() {
     const params = useLocalSearchParams();
@@ -35,7 +35,7 @@ export default function LobbyRoom() {
     }, [code]);
 
     const fetchPlayers = async () => {
-        const { data, error } = await supabase.from('players').select('id, nickname, is_host').eq('room_code', code);
+        const { data, error } = await supabase.from('players').select('id, nickname, is_host, user_id').eq('room_code', code);
         if (data) { setPlayers(data); setIsHost(data.find(p => p.id === playerId)?.is_host || false); }
         setLoading(false);
     };
