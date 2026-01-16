@@ -63,14 +63,25 @@ export default function GameRoom() {
     const fetchVotes = async () => { const { data } = await supabase.from('votes').select('*').eq('room_code', code); if (data) { setVotes(data); setHasVoted(data.some(v => v.voter_id === playerId)); } };
 
     const handleSubmitClue = async () => {
-        if (!clue.trim() || isSubmitting) return;
+        if (!clue.trim() || isSubmitting || hasSubmitted) return;
+
+        // Immediate local guard even before state updates fully
         setIsSubmitting(true);
+        setHasSubmitted(true);
+
         try {
-            await supabase.from('clues').insert({ player_id: playerId, room_code: code, content: clue.trim() });
+            const { error } = await supabase.from('clues').insert({
+                player_id: playerId,
+                room_code: code,
+                content: clue.trim()
+            });
+
+            if (error) throw error;
+
             setClue('');
-            setHasSubmitted(true);
             fetchClues();
         } catch (e) {
+            setHasSubmitted(false); // Re-enable if it failed
             showAlert('خطأ', 'فشل في إرسال الإشارة');
         } finally {
             setIsSubmitting(false);
