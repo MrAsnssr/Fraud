@@ -30,6 +30,7 @@ export default function GameRoom() {
     const [winner, setWinner] = useState<string | null>(null);
     const [round, setRound] = useState(1);
     const [categoryWords, setCategoryWords] = useState<string[]>([]);
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
     useEffect(() => {
         if (code) {
@@ -61,10 +62,44 @@ export default function GameRoom() {
     const fetchClues = async () => { const { data } = await supabase.from('clues').select('*').eq('room_code', code); if (data) { setClues(data); setHasSubmitted(data.filter(c => c.player_id === playerId).length >= round); } };
     const fetchVotes = async () => { const { data } = await supabase.from('votes').select('*').eq('room_code', code); if (data) { setVotes(data); setHasVoted(data.some(v => v.voter_id === playerId)); } };
 
-    const handleSubmitClue = async () => { if (!clue.trim()) return; await supabase.from('clues').insert({ player_id: playerId, room_code: code, content: clue.trim() }); setClue(''); setHasSubmitted(true); fetchClues(); };
-    const handleStartVoting = async () => { await supabase.from('rooms').update({ status: 'PLAYING_VOTING' }).eq('code', code); };
-    const handleAnotherRound = async () => { setRound(r => r + 1); setHasSubmitted(false); };
-    const handleVote = async (targetId: string) => { if (hasVoted) return; await supabase.from('votes').insert({ voter_id: playerId, target_id: targetId, room_code: code }); setHasVoted(true); fetchVotes(); };
+    const handleSubmitClue = async () => {
+        if (!clue.trim() || isSubmitting) return;
+        setIsSubmitting(true);
+        try {
+            await supabase.from('clues').insert({ player_id: playerId, room_code: code, content: clue.trim() });
+            setClue('');
+            setHasSubmitted(true);
+            fetchClues();
+        } catch (e) {
+            showAlert('خطأ', 'فشل في إرسال الإشارة');
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+    const handleStartVoting = async () => {
+        if (isSubmitting) return;
+        setIsSubmitting(true);
+        try {
+            await supabase.from('rooms').update({ status: 'PLAYING_VOTING' }).eq('code', code);
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+    const handleAnotherRound = async () => {
+        if (isSubmitting) return;
+        setRound(r => r + 1); setHasSubmitted(false);
+    };
+    const handleVote = async (targetId: string) => {
+        if (hasVoted || isSubmitting) return;
+        setIsSubmitting(true);
+        try {
+            await supabase.from('votes').insert({ voter_id: playerId, target_id: targetId, room_code: code });
+            setHasVoted(true);
+            fetchVotes();
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
 
     const awardCredits = async (winnerRole: 'CIVILIAN' | 'IMPOSTER') => {
         const winners = players.filter(p => p.role === winnerRole && p.user_id);
@@ -80,22 +115,34 @@ export default function GameRoom() {
     };
 
     const handleTallyVotes = async () => {
-        const counts: Record<string, number> = {}; votes.forEach(v => counts[v.target_id] = (counts[v.target_id] || 0) + 1);
-        const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]); if (sorted.length === 0) return;
-        const topVotedId = sorted[0][0]; const imposter = players.find(p => p.role === 'IMPOSTER');
-        if (topVotedId === imposter?.id) { await supabase.from('rooms').update({ status: 'PLAYING_GUESS' }).eq('code', code); }
-        else {
-            setWinner('النصّاب فاز! 🎭');
-            await awardCredits('IMPOSTER');
-            await supabase.from('rooms').update({ status: 'FINISHED' }).eq('code', code);
+        if (isSubmitting) return;
+        setIsSubmitting(true);
+        try {
+            const counts: Record<string, number> = {}; votes.forEach(v => counts[v.target_id] = (counts[v.target_id] || 0) + 1);
+            const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]); if (sorted.length === 0) return;
+            const topVotedId = sorted[0][0]; const imposter = players.find(p => p.role === 'IMPOSTER');
+            if (topVotedId === imposter?.id) { await supabase.from('rooms').update({ status: 'PLAYING_GUESS' }).eq('code', code); }
+            else {
+                setWinner('النصّاب فاز! 🎭');
+                await awardCredits('IMPOSTER');
+                await supabase.from('rooms').update({ status: 'FINISHED' }).eq('code', code);
+            }
+        } finally {
+            setIsSubmitting(false);
         }
     };
 
     const handleImposterGuess = async (guess: string) => {
-        const isCorrect = guess === civilianWord;
-        setWinner(isCorrect ? 'النصّاب فاز! 🎭' : 'المحققين فازوا! 🎉');
-        await awardCredits(isCorrect ? 'IMPOSTER' : 'CIVILIAN');
-        await supabase.from('rooms').update({ status: 'FINISHED' }).eq('code', code);
+        if (isSubmitting) return;
+        setIsSubmitting(true);
+        try {
+            const isCorrect = guess === civilianWord;
+            setWinner(isCorrect ? 'النصّاب فاز! 🎭' : 'المحققين فازوا! 🎉');
+            await awardCredits(isCorrect ? 'IMPOSTER' : 'CIVILIAN');
+            await supabase.from('rooms').update({ status: 'FINISHED' }).eq('code', code);
+        } finally {
+            setIsSubmitting(false);
+        }
     };
 
     const isHost = players.length > 0 && me?.id === players[0]?.id;
@@ -145,8 +192,12 @@ export default function GameRoom() {
                                 placeholderTextColor="rgba(255,255,255,0.2)"
                                 textAlign="right"
                             />
-                            <Pressable style={styles.sendButton} onPress={handleSubmitClue}>
-                                <MaterialIcons name="send" size={24} color="white" />
+                            <Pressable
+                                style={[styles.sendButton, isSubmitting && { opacity: 0.7 }]}
+                                onPress={handleSubmitClue}
+                                disabled={isSubmitting}
+                            >
+                                {isSubmitting ? <ActivityIndicator color="white" size="small" /> : <MaterialIcons name="send" size={24} color="white" />}
                             </Pressable>
                         </View>
                     ) : (
@@ -155,9 +206,17 @@ export default function GameRoom() {
                             <Text style={styles.waitingText}>في انتظار البقية...</Text>
                             {isHost && allSubmitted && (
                                 <View style={styles.hostActions}>
-                                    <Pressable style={styles.primaryActionButton} onPress={handleStartVoting}>
-                                        <Text style={styles.actionButtonText}>بدء التصويت</Text>
-                                        <MaterialIcons name="how-to-vote" size={20} color="white" />
+                                    <Pressable
+                                        style={[styles.primaryActionButton, isSubmitting && { opacity: 0.7 }]}
+                                        onPress={handleStartVoting}
+                                        disabled={isSubmitting}
+                                    >
+                                        {isSubmitting ? <ActivityIndicator color="white" size="small" /> : (
+                                            <>
+                                                <Text style={styles.actionButtonText}>بدء التصويت</Text>
+                                                <MaterialIcons name="how-to-vote" size={20} color="white" />
+                                            </>
+                                        )}
                                     </Pressable>
                                     <Pressable style={styles.secondaryActionButton} onPress={handleAnotherRound}>
                                         <Text style={styles.secondaryActionText}>جولة ثانية</Text>
@@ -180,9 +239,9 @@ export default function GameRoom() {
                         {players.map(item => (
                             <Pressable
                                 key={item.id}
-                                style={[styles.voteCard, hasVoted && styles.voteCardDisabled]}
+                                style={[styles.voteCard, (hasVoted || isSubmitting) && styles.voteCardDisabled]}
                                 onPress={() => handleVote(item.id)}
-                                disabled={hasVoted}
+                                disabled={hasVoted || isSubmitting}
                             >
                                 <View style={styles.voteCardInner}>
                                     <Text style={styles.voteCardName}>{item.nickname}</Text>
@@ -196,9 +255,17 @@ export default function GameRoom() {
                         ))}
                     </View>
                     {isHost && votes.length >= players.length && (
-                        <Pressable style={styles.primaryActionButton} onPress={handleTallyVotes}>
-                            <Text style={styles.actionButtonText}>كشف النتائج</Text>
-                            <MaterialIcons name="visibility" size={20} color="white" />
+                        <Pressable
+                            style={[styles.primaryActionButton, isSubmitting && { opacity: 0.7 }]}
+                            onPress={handleTallyVotes}
+                            disabled={isSubmitting}
+                        >
+                            {isSubmitting ? <ActivityIndicator color="white" size="small" /> : (
+                                <>
+                                    <Text style={styles.actionButtonText}>كشف النتائج</Text>
+                                    <MaterialIcons name="visibility" size={20} color="white" />
+                                </>
+                            )}
                         </Pressable>
                     )}
                 </View>
@@ -215,7 +282,12 @@ export default function GameRoom() {
                             </View>
                             <View style={styles.guessGrid}>
                                 {(categoryWords.length > 0 ? categoryWords.slice(0, 10) : ['أبل', 'كمثرى', 'كلب', 'ذئب', 'قطة', 'أسد', 'بيتزا', 'برجر', 'كرسي', 'طاولة']).map(opt => (
-                                    <Pressable key={opt} style={styles.guessCard} onPress={() => handleImposterGuess(opt)}>
+                                    <Pressable
+                                        key={opt}
+                                        style={[styles.guessCard, isSubmitting && { opacity: 0.5 }]}
+                                        onPress={() => handleImposterGuess(opt)}
+                                        disabled={isSubmitting}
+                                    >
                                         <Text style={styles.guessText}>{opt}</Text>
                                     </Pressable>
                                 ))}
