@@ -28,12 +28,14 @@ export default function CreateRoom() {
             .or('is_free.eq.true,is_weekly_guest.eq.true');
 
         // 2. Fetch owned topics
-        const { data: ownedData } = await supabase
-            .from('user_topics')
-            .select('word_categories(id, name)')
-            .eq('user_id', session.user.id);
-
-        const ownedTopics = ownedData?.map((item: any) => item.word_categories).filter(Boolean) || [];
+        let ownedTopics: any[] = [];
+        if (session?.user) {
+            const { data: ownedData } = await supabase
+                .from('user_topics')
+                .select('word_categories(id, name)')
+                .eq('user_id', session.user.id);
+            ownedTopics = ownedData?.map((item: any) => item.word_categories).filter(Boolean) || [];
+        }
 
         // 3. Combine and deduplicate
         const combined = [...(publicTopics || []), ...ownedTopics];
