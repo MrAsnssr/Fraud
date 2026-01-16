@@ -29,6 +29,7 @@ export default function GameRoom() {
     const [imposterWord, setImposterWord] = useState('');
     const [winner, setWinner] = useState<string | null>(null);
     const [round, setRound] = useState(1);
+    const [categoryWords, setCategoryWords] = useState<string[]>([]);
 
     useEffect(() => {
         if (code) {
@@ -47,6 +48,13 @@ export default function GameRoom() {
         if (!pData || !rData) { showAlert('خطأ', 'البيانات ما موجودة'); router.replace('/'); return; }
         setMe(pData); setRoomStatus(rData.status); setCivilianWord(rData.civilian_word); setImposterWord(rData.imposter_word);
         setWord(pData.role === 'IMPOSTER' ? rData.imposter_word : rData.civilian_word); setPlayers(allP || []);
+
+        // Fetch category words for the guess phase
+        if (rData.selected_topic) {
+            const { data: catData } = await supabase.from('word_categories').select('words').eq('name', rData.selected_topic).single();
+            if (catData?.words) setCategoryWords(catData.words);
+        }
+
         fetchClues(); fetchVotes(); setLoading(false);
     };
 
@@ -85,7 +93,7 @@ export default function GameRoom() {
                 </View>
                 <View style={styles.intelCard}>
                     <Text style={styles.intelLabel}>{roomStatus === 'FINISHED' ? 'انكشفت الكلمات' : 'معلومتك'}</Text>
-                    <Text style={styles.intelValue}>
+                    <Text style={styles.intelValue} selectable={false}>
                         {roomStatus === 'FINISHED' ? `${civilianWord} / ${imposterWord}` : word}
                     </Text>
                     <View style={styles.intelDecorator} />
@@ -187,7 +195,7 @@ export default function GameRoom() {
                                 <Text style={styles.warningSubtitle}>خمن الكلمة الصحيحة للهروب</Text>
                             </View>
                             <View style={styles.guessGrid}>
-                                {['أبل', 'كمثرى', 'كلب', 'ذئب', 'قطة', 'أسد', 'بيتزا', 'برجر', 'كرسي', 'طاولة'].map(opt => (
+                                {(categoryWords.length > 0 ? categoryWords.slice(0, 10) : ['أبل', 'كمثرى', 'كلب', 'ذئب', 'قطة', 'أسد', 'بيتزا', 'برجر', 'كرسي', 'طاولة']).map(opt => (
                                     <Pressable key={opt} style={styles.guessCard} onPress={() => handleImposterGuess(opt)}>
                                         <Text style={styles.guessText}>{opt}</Text>
                                     </Pressable>

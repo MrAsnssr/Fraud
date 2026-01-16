@@ -58,7 +58,13 @@ export default function LobbyRoom() {
             }
             const imposterIndex = Math.floor(Math.random() * players.length);
             await Promise.all(players.map((p, i) => supabase.from('players').update({ role: i === imposterIndex ? 'IMPOSTER' : 'CIVILIAN' }).eq('id', p.id)));
-            await supabase.from('rooms').update({ status: 'PLAYING_CLUES', civilian_word: civWord, imposter_word: impWord, imposter_id: players[imposterIndex].id }).eq('code', code);
+            await supabase.from('rooms').update({
+                status: 'PLAYING_CLUES',
+                civilian_word: civWord,
+                imposter_word: impWord,
+                imposter_id: players[imposterIndex].id,
+                selected_topic: category.name // Ensure the picked category is saved
+            }).eq('code', code);
         } catch (error: any) { showAlert('خطأ', error.message); }
     };
 
