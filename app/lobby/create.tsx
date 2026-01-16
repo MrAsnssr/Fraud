@@ -20,7 +20,6 @@ export default function CreateRoom() {
 
     const fetchCategories = async () => {
         const { data: { session } } = await supabase.auth.getSession();
-        if (!session) return;
 
         // 1. Fetch free and guest topics
         const { data: publicTopics } = await supabase
@@ -53,7 +52,12 @@ export default function CreateRoom() {
         setLoading(true);
         const roomCode = generateRoomCode();
         try {
-            const { error: roomError } = await supabase.from('rooms').insert([{ code: roomCode, status: 'LOBBY', game_mode: gameMode }]);
+            const { error: roomError } = await supabase.from('rooms').insert([{
+                code: roomCode,
+                status: 'LOBBY',
+                game_mode: gameMode,
+                selected_topic: selectedTopic
+            }]);
             if (roomError) throw roomError;
             const { data: { session } } = await supabase.auth.getSession();
             const { data: userData, error: userError } = await supabase.from('players').insert([{
