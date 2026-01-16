@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, ScrollView, Image, ImageBackground, Platform, Alert } from 'react-native';
+import { View, Text, StyleSheet, Pressable, ScrollView, Image, ImageBackground, Platform, Alert, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { supabase } from '@/lib/supabase';
@@ -10,6 +10,9 @@ export default function HomeScreen() {
   const [profile, setProfile] = useState<any>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [activeRoom, setActiveRoom] = useState<any>(null);
+  const [imagesLoaded, setImagesLoaded] = useState(false);
+  const [loadedCount, setLoadedCount] = useState(0);
+  const TOTAL_IMAGES = 2; // Hero image and Vault card background
 
   useEffect(() => {
     checkUser();
@@ -120,6 +123,16 @@ export default function HomeScreen() {
     }
   };
 
+  const handleImageLoad = () => {
+    setLoadedCount(prev => {
+      const newCount = prev + 1;
+      if (newCount >= TOTAL_IMAGES) {
+        setImagesLoaded(true);
+      }
+      return newCount;
+    });
+  };
+
   return (
     <View style={styles.outerContainer}>
       <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
@@ -128,6 +141,7 @@ export default function HomeScreen() {
             source={require('../assets/images/hero.png')}
             style={styles.heroImage}
             resizeMode="contain"
+            onLoad={handleImageLoad}
           />
 
           <View style={styles.heroOverlay}>
@@ -165,6 +179,7 @@ export default function HomeScreen() {
                 source={{ uri: 'https://lh3.googleusercontent.com/aida-public/AB6AXuBnXToVoU_Ps7X79-9Z6c5ZGJFdYo4VSiJGF6GzBKpa-AldLNOP0zS2F44Ks_tQH-PYCnaJw70vCZ8rCj5Wm0_02FZwsTHNaELdHVd58AyacwfqB9KEZ5jnfCsA4y2XYR065TDzxTKIM6It7zJL8IMvAb-Ebyu0thcmgQ0cBLsW5FY-NMDLOI-zvh3XgR_fAX8lZrySRgB_4bqDL9MC5ZsdfYxH8kZBH8EpKvlmRoWgCsCBhofdjwNSj1n821HB8Oc8nveOeViHHD8' }}
                 style={styles.vaultCard}
                 imageStyle={{ borderRadius: 16 }}
+                onLoad={handleImageLoad}
               >
                 <View style={[styles.vaultOverlay, isAdmin && { backgroundColor: 'rgba(255, 127, 80, 0.85)' }]}>
                   <MaterialIcons name={isAdmin ? "settings" : "lock"} size={28} color="#14181f" style={styles.selfEnd} />
@@ -220,6 +235,12 @@ export default function HomeScreen() {
           <Pressable style={styles.navItem} onPress={() => user ? router.push('/settings') : router.push('/auth')}><MaterialIcons name={user ? "settings" : "login"} size={24} color="#9ca3af" /></Pressable>
         </View>
       </View>
+
+      {!imagesLoaded && (
+        <View style={styles.loadingOverlay}>
+          <ActivityIndicator size="large" color="#1f96ad" />
+        </View>
+      )}
     </View>
   );
 }
@@ -286,4 +307,11 @@ const styles = StyleSheet.create({
   bottomNav: { width: '100%', backgroundColor: 'rgba(0,0,0,0.8)', borderRadius: 99, padding: 8, flexDirection: 'row', justifyContent: 'space-between', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', shadowColor: 'black', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.5, shadowRadius: 20 },
   navItem: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
   navItemActive: { backgroundColor: 'rgba(31, 150, 173, 0.2)', borderWidth: 1, borderColor: 'rgba(31, 150, 173, 0.5)' },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#14181f',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 999
+  }
 });
