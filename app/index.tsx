@@ -27,8 +27,15 @@ export default function HomeScreen() {
         setIsAdmin(false);
       }
     });
+
+    // Safety timeout: stop loading after 5 seconds regardless
+    const timer = setTimeout(() => {
+      setImagesLoaded(true);
+    }, 5000);
+
     return () => {
       authListener.subscription.unsubscribe();
+      clearTimeout(timer);
     };
   }, []);
 
@@ -142,6 +149,7 @@ export default function HomeScreen() {
             style={styles.heroImage}
             resizeMode="contain"
             onLoad={handleImageLoad}
+            onError={handleImageLoad}
           />
 
           <View style={styles.heroOverlay}>
@@ -180,6 +188,7 @@ export default function HomeScreen() {
                 style={styles.vaultCard}
                 imageStyle={{ borderRadius: 16 }}
                 onLoad={handleImageLoad}
+                onError={handleImageLoad}
               >
                 <View style={[styles.vaultOverlay, isAdmin && { backgroundColor: 'rgba(255, 127, 80, 0.85)' }]}>
                   <MaterialIcons name={isAdmin ? "settings" : "lock"} size={28} color="#14181f" style={styles.selfEnd} />

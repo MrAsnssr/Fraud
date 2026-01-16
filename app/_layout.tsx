@@ -2,6 +2,7 @@ import { Stack } from 'expo-router';
 import { View, StyleSheet, ActivityIndicator } from 'react-native';
 import { useFonts, Epilogue_400Regular, Epilogue_700Bold, Epilogue_900Black_Italic } from '@expo-google-fonts/epilogue';
 import { Cairo_400Regular, Cairo_700Bold, Cairo_900Black } from '@expo-google-fonts/cairo';
+import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 
 export default function RootLayout() {
     const [fontsLoaded] = useFonts({
@@ -11,6 +12,8 @@ export default function RootLayout() {
         'Cairo': Cairo_400Regular,
         'Cairo-Bold': Cairo_700Bold,
         'Cairo-Black': Cairo_900Black,
+        ...MaterialIcons.font,
+        ...MaterialCommunityIcons.font,
     });
 
     if (!fontsLoaded) {
