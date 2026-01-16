@@ -1,0 +1,11 @@
+services:
+  - type: static
+    name: the-imposter-web
+    env: static
+    buildCommand: npm install && npx expo export --platform web
+    staticPublishPath: dist
+    envVars:
+      - key: EXPO_PUBLIC_SUPABASE_URL
+        sync: false
+      - key: EXPO_PUBLIC_SUPABASE_ANON_KEY
+        sync: false
