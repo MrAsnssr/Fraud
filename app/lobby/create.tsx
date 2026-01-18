@@ -48,7 +48,24 @@ export default function CreateRoom() {
         }
     };
 
-    const generateRoomCode = () => Math.random().toString(36).substring(2, 6).toUpperCase();
+    const generateRoomCode = () => {
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+        return Array.from({ length: 4 }, () =>
+            chars[Math.floor(Math.random() * chars.length)]
+        ).join('');
+    };
+
+    const getUniqueRoomCode = async (): Promise<string> => {
+        let attempts = 0;
+        while (attempts < 10) {
+            const code = generateRoomCode();
+            const { data } = await supabase.from('rooms').select('code').eq('code', code).single();
+            if (!data) return code; // Code doesn't exist, it's unique
+            attempts++;
+        }
+        // Fallback: add timestamp suffix if too many collisions
+        return generateRoomCode() + Date.now().toString(36).slice(-2).toUpperCase();
+    };
 
     const handleCreateRoom = async () => {
         if (!nickname.trim() || loading || actionLock.current) {
@@ -58,8 +75,8 @@ export default function CreateRoom() {
 
         actionLock.current = true;
         setLoading(true);
-        const roomCode = generateRoomCode();
         try {
+            const roomCode = await getUniqueRoomCode();
             const { error: roomError } = await supabase.from('rooms').insert([{
                 code: roomCode,
                 status: 'LOBBY',

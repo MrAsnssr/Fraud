@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, Pressable, TextInput, Alert, ScrollView, Activi
 import { useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
+import * as Clipboard from 'expo-clipboard';
 
 const showAlert = (title: string, msg: string) => Platform.OS === 'web' ? window.alert(`${title}: ${msg}`) : Alert.alert(title, msg);
 
@@ -125,6 +126,31 @@ export default function PacksPage() {
         } catch (e: any) { showAlert('خطأ', e.message); }
     };
 
+    const handleExportJSON = async (targetCat?: WordCategory) => {
+        const catToExport = targetCat || selectedCategory;
+        if (!catToExport && !targetCat) {
+            showAlert('تنبيه', 'يرجى اختيار حزمة أولاً لاستخراجها');
+            return;
+        }
+
+        try {
+            const packs = targetCat ? [targetCat] : (selectedCategory ? [selectedCategory] : categories);
+            const wordPacks = packs.map(cat => ({
+                category: cat.name,
+                words: cat.words || [],
+                relativePairs: cat.relative_pairs || []
+            }));
+
+            const exportData = { wordPacks };
+            const jsonString = JSON.stringify(exportData, null, 2);
+
+            await Clipboard.setStringAsync(jsonString);
+            showAlert('تم الاستخراج', `✅ تم نسخ بيانات ${packs.length > 1 ? 'جميع الحزم' : 'الحزمة'} بصيغة JSON`);
+        } catch (e: any) {
+            showAlert('خطأ', 'فشل في استخراج البيانات');
+        }
+    };
+
     const handleDeletePack = async (id: number) => {
         const { error } = await supabase.from('word_categories').delete().eq('id', id);
         if (error) showAlert('خطأ', error.message);
@@ -140,6 +166,11 @@ export default function PacksPage() {
                     <MaterialIcons name="arrow-back" size={20} color="white" />
                 </Pressable>
                 <Text style={styles.headerTitle}>{selectedCategory ? selectedCategory.name : 'حزم الكلمات'}</Text>
+                {selectedCategory && (
+                    <Pressable onPress={() => handleExportJSON()} style={[styles.backButton, { marginLeft: 'auto', backgroundColor: '#1f96ad20', borderColor: '#1f96ad40' }]}>
+                        <MaterialIcons name="content-copy" size={20} color="#1f96ad" />
+                    </Pressable>
+                )}
             </View>
 
             {!selectedCategory ? (
@@ -174,6 +205,9 @@ export default function PacksPage() {
                                     <Pressable onPress={() => handleDeletePack(cat.id)} style={styles.cardDeleteIcon}>
                                         <MaterialIcons name="delete-outline" size={20} color="#FF7F50" />
                                     </Pressable>
+                                    <Pressable onPress={() => handleExportJSON(cat)} style={[styles.cardDeleteIcon, { right: 44 }]}>
+                                        <MaterialIcons name="content-copy" size={18} color="#1f96ad" />
+                                    </Pressable>
                                 </View>
                             ))}
                         </View>
@@ -191,10 +225,16 @@ export default function PacksPage() {
                             placeholderTextColor="rgba(31, 150, 173, 0.3)"
                             textAlign="left"
                         />
-                        <Pressable style={styles.primaryActionButton} onPress={handleImportJSON}>
-                            <Text style={styles.actionButtonText}>حقن البيانات</Text>
-                            <MaterialIcons name="file-download" size={20} color="white" />
-                        </Pressable>
+                        <View style={{ flexDirection: 'row', gap: 12 }}>
+                            <Pressable style={[styles.primaryActionButton, { flex: 1 }]} onPress={handleImportJSON}>
+                                <Text style={styles.actionButtonText}>حقن البيانات</Text>
+                                <MaterialIcons name="file-download" size={20} color="white" />
+                            </Pressable>
+                            <Pressable style={[styles.primaryActionButton, { flex: 1, backgroundColor: '#1f96ad' }]} onPress={handleExportJSON}>
+                                <Text style={styles.actionButtonText}>استخراج</Text>
+                                <MaterialIcons name="content-copy" size={20} color="white" />
+                            </Pressable>
+                        </View>
                     </View>
                 </>
             ) : (

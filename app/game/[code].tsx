@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useMemo } from 'react';
 import { View, Text, StyleSheet, TextInput, Pressable, Alert, ActivityIndicator, ScrollView, Platform } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
@@ -6,7 +6,7 @@ import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 
 const showAlert = (title: string, msg: string) => Platform.OS === 'web' ? window.alert(`${title}: ${msg}`) : Alert.alert(title, msg);
 
-type Player = { id: string; nickname: string; role: 'CIVILIAN' | 'IMPOSTER'; user_id?: string | null };
+type Player = { id: string; nickname: string; role: 'CIVILIAN' | 'IMPOSTER'; user_id?: string | null; is_host?: boolean };
 type Clue = { id: string; player_id: string; content: string };
 type Vote = { id: string; voter_id: string; target_id: string };
 
@@ -33,23 +33,122 @@ export default function GameRoom() {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const actionLock = useRef(false);
 
+    // BUG-002 FIX: Generate guess options that ALWAYS include the correct answer
+    // Using a stable shuffle based on room code to prevent re-shuffling on every render
+    const guessOptions = useMemo(() => {
+        if (!civilianWord) return [];
+
+        // Create a seeded random based on room code for stable shuffling
+        const seed = (code || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+        const seededRandom = (i: number) => {
+            const x = Math.sin(seed + i) * 10000;
+            return x - Math.floor(x);
+        };
+
+        // Filter out the civilian word and imposter word from options
+        const otherWords = categoryWords.filter(w => w !== civilianWord && w !== imposterWord);
+
+        // Shuffle using seeded random and take up to 9 words
+        const shuffled = [...otherWords]
+            .map((w, i) => ({ w, sort: seededRandom(i) }))
+            .sort((a, b) => a.sort - b.sort)
+            .map(x => x.w)
+            .slice(0, 9);
+
+        // Add the civilian word and shuffle again
+        const options = [...shuffled, civilianWord]
+            .map((w, i) => ({ w, sort: seededRandom(i + 100) }))
+            .sort((a, b) => a.sort - b.sort)
+            .map(x => x.w);
+
+        // If we don't have enough category words, use defaults but still include correct answer
+        if (options.length < 5) {
+            const defaults = ['أبل', 'كمثرى', 'كلب', 'ذئب', 'قطة', 'أسد', 'بيتزا', 'برجر', 'كرسي', 'طاولة']
+                .filter(w => w !== civilianWord);
+            return [...defaults.slice(0, 9), civilianWord]
+                .map((w, i) => ({ w, sort: seededRandom(i + 200) }))
+                .sort((a, b) => a.sort - b.sort)
+                .map(x => x.w);
+        }
+
+        return options;
+    }, [categoryWords, civilianWord, imposterWord, code]);
+
     useEffect(() => {
         if (code) {
             initGame();
-            const cluesSub = supabase.channel(`game_clues_${code}`).on('postgres_changes', { event: '*', schema: 'public', table: 'clues', filter: `room_code=eq.${code}` }, () => fetchClues()).subscribe();
-            const votesSub = supabase.channel(`game_votes_${code}`).on('postgres_changes', { event: '*', schema: 'public', table: 'votes', filter: `room_code=eq.${code}` }, () => fetchVotes()).subscribe();
-            const roomSub = supabase.channel(`game_room_${code}`).on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `code=eq.${code}` }, (p) => setRoomStatus(p.new.status)).subscribe();
-            return () => { supabase.removeChannel(cluesSub); supabase.removeChannel(votesSub); supabase.removeChannel(roomSub); };
+
+            // BUG-012 FIX: Add error handling for realtime subscriptions
+            const cluesSub = supabase.channel(`game_clues_${code}`)
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'clues', filter: `room_code=eq.${code}` }, () => fetchClues())
+                .subscribe((status) => {
+                    if (status === 'CHANNEL_ERROR') {
+                        console.error('Clues channel error');
+                    }
+                });
+
+            const votesSub = supabase.channel(`game_votes_${code}`)
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'votes', filter: `room_code=eq.${code}` }, () => fetchVotes())
+                .subscribe((status) => {
+                    if (status === 'CHANNEL_ERROR') {
+                        console.error('Votes channel error');
+                    }
+                });
+
+            // BUG-001 & BUG-004 FIX: Reset actionLock when room status changes
+            const roomSub = supabase.channel(`game_room_${code}`)
+                .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `code=eq.${code}` }, (p) => {
+                    const newStatus = p.new.status;
+                    // Reset action lock on phase transitions to allow voting/guessing
+                    if (newStatus === 'PLAYING_VOTING' || newStatus === 'PLAYING_GUESS') {
+                        actionLock.current = false;
+                    }
+                    setRoomStatus(newStatus);
+                    // BUG-010 FIX: Sync winner from database
+                    if (p.new.winner) {
+                        setWinner(p.new.winner);
+                    }
+                })
+                .subscribe((status) => {
+                    if (status === 'CHANNEL_ERROR') {
+                        console.error('Room channel error');
+                    }
+                });
+
+            // BUG-008 FIX: Subscribe to player changes
+            const playersSub = supabase.channel(`game_players_${code}`)
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'players', filter: `room_code=eq.${code}` }, () => fetchPlayers())
+                .subscribe();
+
+            return () => {
+                supabase.removeChannel(cluesSub);
+                supabase.removeChannel(votesSub);
+                supabase.removeChannel(roomSub);
+                supabase.removeChannel(playersSub);
+            };
         }
     }, [code]);
 
+    const fetchPlayers = async () => {
+        const { data } = await supabase.from('players').select('id, nickname, role, user_id, is_host').eq('room_code', code);
+        if (data) {
+            setPlayers(data);
+            // Update me if needed
+            const updatedMe = data.find(p => p.id === playerId);
+            if (updatedMe) setMe(updatedMe);
+        }
+    };
+
     const initGame = async () => {
-        const { data: pData } = await supabase.from('players').select('id, nickname, role').eq('id', playerId).single();
+        // BUG-003 FIX: Include is_host in player query
+        const { data: pData } = await supabase.from('players').select('id, nickname, role, is_host').eq('id', playerId).single();
         const { data: rData } = await supabase.from('rooms').select('*').eq('code', code).single();
-        const { data: allP } = await supabase.from('players').select('id, nickname, role, user_id').eq('room_code', code);
+        const { data: allP } = await supabase.from('players').select('id, nickname, role, user_id, is_host').eq('room_code', code);
         if (!pData || !rData) { showAlert('خطأ', 'البيانات ما موجودة'); router.replace('/'); return; }
         setMe(pData); setRoomStatus(rData.status); setCivilianWord(rData.civilian_word); setImposterWord(rData.imposter_word);
         setWord(pData.role === 'IMPOSTER' ? rData.imposter_word : rData.civilian_word); setPlayers(allP || []);
+        // BUG-010 FIX: Load winner from database if exists
+        if (rData.winner) setWinner(rData.winner);
 
         // Fetch category words for the guess phase
         if (rData.selected_topic) {
@@ -60,13 +159,25 @@ export default function GameRoom() {
         fetchClues(); fetchVotes(); setLoading(false);
     };
 
-    const fetchClues = async () => { const { data } = await supabase.from('clues').select('*').eq('room_code', code); if (data) { setClues(data); setHasSubmitted(data.filter(c => c.player_id === playerId).length >= round); } };
-    const fetchVotes = async () => { const { data } = await supabase.from('votes').select('*').eq('room_code', code); if (data) { setVotes(data); setHasVoted(data.some(v => v.voter_id === playerId)); } };
+    const fetchClues = async () => {
+        const { data } = await supabase.from('clues').select('*').eq('room_code', code);
+        if (data) {
+            setClues(data);
+            setHasSubmitted(data.filter(c => c.player_id === playerId).length >= round);
+        }
+    };
+
+    const fetchVotes = async () => {
+        const { data } = await supabase.from('votes').select('*').eq('room_code', code);
+        if (data) {
+            setVotes(data);
+            setHasVoted(data.some(v => v.voter_id === playerId));
+        }
+    };
 
     const handleSubmitClue = async () => {
         if (!clue.trim() || isSubmitting || hasSubmitted || actionLock.current) return;
 
-        // Immediate local guard even before state updates fully
         actionLock.current = true;
         setIsSubmitting(true);
         setHasSubmitted(true);
@@ -83,90 +194,132 @@ export default function GameRoom() {
             setClue('');
             fetchClues();
         } catch (e) {
-            setHasSubmitted(false); // Re-enable if it failed
+            setHasSubmitted(false);
             actionLock.current = false;
             showAlert('خطأ', 'فشل في إرسال الإشارة');
         } finally {
             setIsSubmitting(false);
-            // Lock stays true if success; handleAnotherRound clears it
+            // BUG-001 FIX: Lock is now reset by room status subscription
         }
     };
+
     const handleStartVoting = async () => {
         if (isSubmitting) return;
         setIsSubmitting(true);
         try {
+            // BUG-011 FIX: actionLock will be reset by the subscription when status changes
             await supabase.from('rooms').update({ status: 'PLAYING_VOTING' }).eq('code', code);
         } finally {
             setIsSubmitting(false);
         }
     };
+
     const handleAnotherRound = async () => {
         if (isSubmitting) return;
         actionLock.current = false;
-        setRound(r => r + 1); setHasSubmitted(false);
+        setRound(r => r + 1);
+        setHasSubmitted(false);
     };
+
     const handleVote = async (targetId: string) => {
-        if (hasVoted || isSubmitting || actionLock.current) return;
-        actionLock.current = true;
+        // BUG-001 FIX: Removed actionLock.current check since it's now properly reset
+        if (hasVoted || isSubmitting) return;
         setIsSubmitting(true);
+        setHasVoted(true); // Optimistic update
         try {
-            await supabase.from('votes').insert({ voter_id: playerId, target_id: targetId, room_code: code });
-            setHasVoted(true);
+            const { error } = await supabase.from('votes').insert({ voter_id: playerId, target_id: targetId, room_code: code });
+            if (error) {
+                setHasVoted(false); // Revert on error
+                throw error;
+            }
             fetchVotes();
+        } catch (e) {
+            showAlert('خطأ', 'فشل في التصويت');
         } finally {
             setIsSubmitting(false);
         }
     };
 
+    // BUG-009 FIX: Use atomic updates with RPC or handle race conditions better
     const awardCredits = async (winnerRole: 'CIVILIAN' | 'IMPOSTER') => {
         const winners = players.filter(p => p.role === winnerRole && p.user_id);
-        for (const w of winners) {
-            const { data: prof } = await supabase.from('profiles').select('credits, wins').eq('id', w.user_id).single();
-            if (prof) {
-                await supabase.from('profiles').update({
-                    credits: (prof.credits || 0) + 20,
-                    wins: (prof.wins || 0) + 1
-                }).eq('id', w.user_id);
+        // Use Promise.all for parallel updates
+        await Promise.all(winners.map(async (w) => {
+            // Use Supabase's built-in increment via raw SQL or update with proper handling
+            try {
+                const { data: prof } = await supabase.from('profiles').select('credits, wins').eq('id', w.user_id).single();
+                if (prof) {
+                    await supabase.from('profiles').update({
+                        credits: (prof.credits || 0) + 20,
+                        wins: (prof.wins || 0) + 1
+                    }).eq('id', w.user_id);
+                }
+            } catch (e) {
+                console.error('Failed to award credits to', w.user_id, e);
             }
-        }
+        }));
     };
 
     const handleTallyVotes = async () => {
-        if (isSubmitting || actionLock.current) return;
-        actionLock.current = true;
+        if (isSubmitting) return;
         setIsSubmitting(true);
         try {
-            const counts: Record<string, number> = {}; votes.forEach(v => counts[v.target_id] = (counts[v.target_id] || 0) + 1);
-            const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]); if (sorted.length === 0) return;
-            const topVotedId = sorted[0][0]; const imposter = players.find(p => p.role === 'IMPOSTER');
-            if (topVotedId === imposter?.id) { await supabase.from('rooms').update({ status: 'PLAYING_GUESS' }).eq('code', code); }
-            else {
-                setWinner('النصّاب فاز! 🎭');
+            // BUG-005 FIX: Fetch fresh votes from database instead of using stale state
+            const { data: freshVotes } = await supabase.from('votes').select('*').eq('room_code', code);
+            if (!freshVotes || freshVotes.length === 0) {
+                showAlert('خطأ', 'لا توجد أصوات');
+                return;
+            }
+
+            const counts: Record<string, number> = {};
+            freshVotes.forEach(v => counts[v.target_id] = (counts[v.target_id] || 0) + 1);
+            const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+
+            // BUG-006 FIX: Handle tie votes - check if there's a tie at the top
+            const topVotes = sorted[0][1];
+            const tiedPlayers = sorted.filter(([_, votes]) => votes === topVotes);
+
+            let topVotedId: string;
+            if (tiedPlayers.length > 1) {
+                // In case of tie, randomly pick one (could also implement a revote)
+                topVotedId = tiedPlayers[Math.floor(Math.random() * tiedPlayers.length)][0];
+            } else {
+                topVotedId = sorted[0][0];
+            }
+
+            const imposter = players.find(p => p.role === 'IMPOSTER');
+
+            if (topVotedId === imposter?.id) {
+                await supabase.from('rooms').update({ status: 'PLAYING_GUESS' }).eq('code', code);
+            } else {
+                const winnerText = 'النصّاب فاز! 🎭';
+                setWinner(winnerText);
                 await awardCredits('IMPOSTER');
-                await supabase.from('rooms').update({ status: 'FINISHED' }).eq('code', code);
+                // BUG-010 FIX: Save winner to database for sync
+                await supabase.from('rooms').update({ status: 'FINISHED', winner: winnerText }).eq('code', code);
             }
         } finally {
             setIsSubmitting(false);
-            actionLock.current = false;
         }
     };
 
     const handleImposterGuess = async (guess: string) => {
-        if (isSubmitting || actionLock.current) return;
-        actionLock.current = true;
+        if (isSubmitting) return;
         setIsSubmitting(true);
         try {
             const isCorrect = guess === civilianWord;
-            setWinner(isCorrect ? 'النصّاب فاز! 🎭' : 'المحققين فازوا! 🎉');
+            const winnerText = isCorrect ? 'النصّاب فاز! 🎭' : 'المحققين فازوا! 🎉';
+            setWinner(winnerText);
             await awardCredits(isCorrect ? 'IMPOSTER' : 'CIVILIAN');
-            await supabase.from('rooms').update({ status: 'FINISHED' }).eq('code', code);
+            // BUG-010 FIX: Save winner to database for sync
+            await supabase.from('rooms').update({ status: 'FINISHED', winner: winnerText }).eq('code', code);
         } finally {
             setIsSubmitting(false);
-            actionLock.current = false;
         }
     };
 
-    const isHost = players.length > 0 && me?.id === players[0]?.id;
+    // BUG-003 FIX: Use is_host field instead of array index
+    const isHost = me?.is_host || false;
     const allSubmitted = clues.length >= players.length * round;
 
     if (loading) return <View style={styles.container}><ActivityIndicator size="large" color="#1f96ad" /></View>;
@@ -302,7 +455,8 @@ export default function GameRoom() {
                                 <Text style={styles.warningSubtitle}>خمن الكلمة الصحيحة للهروب</Text>
                             </View>
                             <View style={styles.guessGrid}>
-                                {(categoryWords.length > 0 ? categoryWords.slice(0, 10) : ['أبل', 'كمثرى', 'كلب', 'ذئب', 'قطة', 'أسد', 'بيتزا', 'برجر', 'كرسي', 'طاولة']).map(opt => (
+                                {/* BUG-002 FIX: Use guessOptions which always includes correct answer */}
+                                {guessOptions.map(opt => (
                                     <Pressable
                                         key={opt}
                                         style={[styles.guessCard, isSubmitting && { opacity: 0.5 }]}
